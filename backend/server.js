@@ -1,13 +1,47 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const { GoogleGenAI } = require("@google/genai");
 const { toolDefinitions, toolImplementations } = require("./tools");
 const { logQuery, getRecentQueries } = require("./queryLog");
 
+// Fail fast with a clear error instead of silently running broken
+if (!process.env.GEMINI_API_KEY) {
+  console.error("FATAL: GEMINI_API_KEY is not set. Add it to your .env file or hosting provider's environment variables.");
+  process.exit(1);
+}
+
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(helmet());
+app.use(express.json({ limit: "20kb" })); // small payload cap — this API never needs more
+
+// Restrict CORS to known frontend origins. Set FRONTEND_URL in your host's env vars
+// once deployed; falls back to allowing localhost for local development.
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  "http://localhost:5500",
+  "http://127.0.0.1:5500",
+  "null", // file:// origin some browsers report when opening index.html directly
+].filter(Boolean);
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error("Not allowed by CORS"));
+  },
+}));
+
+// Rate limit the AI-calling endpoints to prevent abuse / runaway API costs
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20, // 20 requests/minute/IP — generous for demo use, protects against abuse
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please wait a moment and try again." },
+});
+app.use("/api/chat", aiLimiter);
+app.use("/api/staff/broadcast", aiLimiter);
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const MODEL = "gemini-3.1-flash-lite";
@@ -70,9 +104,18 @@ app.post("/api/chat", async (req, res) => {
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: "messages array is required" });
     }
+    if (messages.length > 30) {
+      return res.status(400).json({ error: "Conversation too long. Please start a new chat." });
+    }
+    const isValidMessage = (m) =>
+      m && (m.role === "user" || m.role === "assistant") &&
+      typeof m.content === "string" && m.content.trim().length > 0 && m.content.length <= 2000;
+    if (!messages.every(isValidMessage)) {
+      return res.status(400).json({ error: "Each message needs a valid role and content under 2000 characters." });
+    }
 
     const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
-    if (lastUserMessage) logQuery(lastUserMessage.content, language);
+    if (lastUserMessage) logQuery(lastUserMessage.content, typeof language === "string" ? language.slice(0, 20) : "unknown");
 
     let contents = toGeminiContents(messages);
     let finalText = "";
@@ -145,13 +188,21 @@ app.get("/api/staff/summary", async (req, res) => {
 app.post("/api/staff/broadcast", async (req, res) => {
   try {
     const { incident, languages } = req.body;
-    if (!incident) return res.status(400).json({ error: "incident description is required" });
-    const targetLanguages = Array.isArray(languages) && languages.length ? languages : ["English"];
+    if (typeof incident !== "string" || incident.trim().length === 0) {
+      return res.status(400).json({ error: "incident description is required" });
+    }
+    if (incident.length > 500) {
+      return res.status(400).json({ error: "Incident description too long (max 500 characters)." });
+    }
+    const targetLanguages = Array.isArray(languages)
+      ? languages.filter((l) => typeof l === "string").slice(0, 6)
+      : [];
+    const finalLanguages = targetLanguages.length ? targetLanguages : ["English"];
 
     const response = await generateWithRetry({
       model: MODEL,
       contents: [
-        { role: "user", parts: [{ text: `Incident: ${incident}\nLanguages: ${targetLanguages.join(", ")}` }] },
+        { role: "user", parts: [{ text: `Incident: ${incident}\nLanguages: ${finalLanguages.join(", ")}` }] },
       ],
       config: { systemInstruction: BROADCAST_SYSTEM_PROMPT, responseMimeType: "application/json" },
     });
@@ -182,4 +233,8 @@ app.get("/api/staff/queries", (req, res) => {
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`StadiumSense backend running on port ${PORT}`));
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`StadiumSense backend running on port ${PORT}`));
+}
+
+module.exports = app;
