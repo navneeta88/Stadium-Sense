@@ -1,0 +1,13 @@
+{
+  "last_updated": "2026-07-16T15:00:00Z",
+  "zones": [
+    { "zone": "gate_a", "density_pct": 42, "status": "moderate", "trend": "steady" },
+    { "zone": "gate_b", "density_pct": 88, "status": "critical", "trend": "rising" },
+    { "zone": "gate_c", "density_pct": 65, "status": "high", "trend": "rising" },
+    { "zone": "gate_d", "density_pct": 20, "status": "low", "trend": "falling" },
+    { "zone": "concourse_n", "density_pct": 75, "status": "high", "trend": "rising" },
+    { "zone": "concourse_s", "density_pct": 30, "status": "low", "trend": "steady" },
+    { "zone": "concourse_e", "density_pct": 55, "status": "moderate", "trend": "steady" },
+    { "zone": "concourse_w", "density_pct": 35, "status": "low", "trend": "falling" }
+  ]
+}
