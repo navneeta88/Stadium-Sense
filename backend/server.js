@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
+const compression = require("compression");
 const rateLimit = require("express-rate-limit");
 const { GoogleGenAI } = require("@google/genai");
 const { toolDefinitions, toolImplementations } = require("./tools");
@@ -14,7 +15,10 @@ if (!process.env.GEMINI_API_KEY) {
 }
 
 const app = express();
+app.set("trust proxy", 1); // Render (and most PaaS hosts) sit behind a proxy — needed so
+                            // rate limiting sees the real client IP, not the proxy's IP.
 app.use(helmet());
+app.use(compression());
 app.use(express.json({ limit: "20kb" })); // small payload cap — this API never needs more
 
 // Restrict CORS to known frontend origins. Set FRONTEND_URL in your host's env vars
@@ -222,8 +226,11 @@ app.post("/api/staff/broadcast", async (req, res) => {
 });
 
 // --- Raw data endpoints, useful for the dashboard's live views ---
+const crowdData = require("./data/crowd_data.json"); // required once, Node caches the module anyway — this makes the intent explicit
+
 app.get("/api/crowd", (req, res) => {
-  res.json(require("./data/crowd_data.json"));
+  res.set("Cache-Control", "public, max-age=10"); // mock data refreshes infrequently; avoids redundant work on rapid dashboard polling
+  res.json(crowdData);
 });
 
 app.get("/api/staff/queries", (req, res) => {
@@ -231,6 +238,18 @@ app.get("/api/staff/queries", (req, res) => {
 });
 
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
+
+// 404 for any unmatched route, instead of Express's default HTML error page
+app.use((req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+// Centralized error handler — ensures no stack traces or internal details
+// ever leak to the client, even for errors thrown outside route handlers (e.g. CORS rejection).
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(err.status || 500).json({ error: "Something went wrong." });
+});
 
 const PORT = process.env.PORT || 3001;
 if (require.main === module) {

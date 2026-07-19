@@ -1,8 +1,9 @@
 const stadiumMap = require("./data/stadium_map.json");
 const crowdData = require("./data/crowd_data.json");
 
-// --- Simple breadth-first search over the stadium graph ---
-function findPath(fromId, toId, requireAccessible) {
+// Precompute both graph variants once at module load, instead of rebuilding
+// the adjacency list on every single get_directions call.
+function buildAdjacency(requireAccessible) {
   const adjacency = {};
   for (const node of stadiumMap.nodes) adjacency[node.id] = [];
   for (const edge of stadiumMap.edges) {
@@ -10,6 +11,23 @@ function findPath(fromId, toId, requireAccessible) {
     adjacency[edge.from].push({ to: edge.to, walk_minutes: edge.walk_minutes });
     adjacency[edge.to].push({ to: edge.from, walk_minutes: edge.walk_minutes });
   }
+  return adjacency;
+}
+const FULL_ADJACENCY = buildAdjacency(false);
+const ACCESSIBLE_ADJACENCY = buildAdjacency(true);
+
+// Index nodes by id and lowercase name once, instead of scanning the array on every lookup.
+const NODES_BY_ID = new Map(stadiumMap.nodes.map((n) => [n.id, n]));
+const NODE_SEARCH_INDEX = stadiumMap.nodes.map((n) => ({
+  id: n.id,
+  name: n.name,
+  nameLower: n.name.toLowerCase(),
+  type: n.type,
+}));
+
+// --- Simple breadth-first search over the precomputed stadium graph ---
+function findPath(fromId, toId, requireAccessible) {
+  const adjacency = requireAccessible ? ACCESSIBLE_ADJACENCY : FULL_ADJACENCY;
 
   const visited = new Set([fromId]);
   const queue = [{ id: fromId, path: [fromId], minutes: 0 }];
@@ -28,17 +46,18 @@ function findPath(fromId, toId, requireAccessible) {
     }
   }
   return null;
+
 }
 
 function nodeName(id) {
-  const node = stadiumMap.nodes.find((n) => n.id === id);
+  const node = NODES_BY_ID.get(id);
   return node ? node.name : id;
 }
 
 function findNodeIdByName(query) {
   const q = query.toLowerCase();
-  const match = stadiumMap.nodes.find(
-    (n) => n.id === q || n.name.toLowerCase().includes(q) || n.type.toLowerCase() === q
+  const match = NODE_SEARCH_INDEX.find(
+    (n) => n.id === q || n.nameLower.includes(q) || n.type.toLowerCase() === q
   );
   return match ? match.id : null;
 }

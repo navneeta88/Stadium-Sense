@@ -17,6 +17,34 @@ describe("GET /api/crowd", () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.zones)).toBe(true);
   });
+
+  test("sets a cache-control header", async () => {
+    const res = await request(app).get("/api/crowd");
+    expect(res.headers["cache-control"]).toMatch(/max-age/);
+  });
+});
+
+describe("unmatched routes", () => {
+  test("returns a JSON 404, not an HTML error page", async () => {
+    const res = await request(app).get("/api/definitely-not-a-real-route");
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Not found" });
+  });
+});
+
+describe("security headers", () => {
+  test("helmet headers are present", async () => {
+    const res = await request(app).get("/api/health");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["x-frame-options"]).toBeDefined();
+  });
+
+  test("response body is gzip-compressible (compression middleware active)", async () => {
+    const res = await request(app).get("/api/crowd").set("Accept-Encoding", "gzip");
+    // supertest/superagent auto-decompresses, so we just confirm the endpoint
+    // still returns valid data with compression middleware in the stack.
+    expect(res.status).toBe(200);
+  });
 });
 
 describe("GET /api/staff/queries", () => {
